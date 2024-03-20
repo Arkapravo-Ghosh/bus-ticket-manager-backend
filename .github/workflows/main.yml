@@ -1,0 +1,38 @@
+name: "Deployment"
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+jobs:
+  deploy:
+    name: Deploy to Azure
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh/
+        echo "${{ secrets.SERVER_SSH_KEY }}" | base64 --decode > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -t rsa ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+    - name: Package Files
+      run: |
+        rm -rf .git
+        zip -r files.zip .
+    - name: Transfer Files to Server
+      run: |
+        ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "sudo rm -rf ${{ secrets.PROJECT_PATH }}"
+        ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "sudo mkdir -p ${{ secrets.PROJECT_PATH }}"
+        ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "sudo chown -R ${{ secrets.SERVER_USER }}:${{ secrets.SERVER_USER }} ${{ secrets.PROJECT_PATH }}"
+        scp -i ~/.ssh/id_rsa files.zip ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.PROJECT_PATH }}
+        ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "cd ${{ secrets.PROJECT_PATH }}; unzip -o files.zip; rm files.zip"
+    - name: Refresh Environment Variables
+      run: |
+        ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "cd ${{ secrets.PROJECT_PATH }}; touch .env.production; echo PORT=\"${{ secrets.SERVER_PORT }}\" >> .env.production; echo PRODUCTION=true >> .env.production; echo SMTP_USER=\"${{ secrets.SMTP_USER }}\" >> .env.production; echo SMTP_PASSWD=\"${{ secrets.SMTP_PASSWD }}\" >> .env.production; echo SMTP_HOST=\"${{ secrets.SMTP_HOST }}\" >> .env.production; echo SMTP_PORT=\"${{ secrets.SMTP_PORT }}\" >> .env.production; echo SQL_HOST=\"${{ secrets.SQL_HOST }}\" >> .env.production; echo SQL_PORT=${{ secrets.SQL_PORT }} >> .env.production; echo SQL_USER=\"${{ secrets.SQL_USER }}\" >> .env.production; echo SQL_PASSWD=\"${{ secrets.SQL_PASSWD }}\" >> .env.production; echo SQL_DB=\"${{ secrets.SQL_DB }}\" >> .env.production; echo JWT_SECRET=\"${{ secrets.JWT_SECRET }}\" >> .env.production"
+    - name: Install Dependencies
+      run: |
+        ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "cd ${{ secrets.PROJECT_PATH }}; sudo npm i"
+    - name: Restart Server
+      run: |
+        ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "sudo systemctl restart bus-ticket-manager-backend"
